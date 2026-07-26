@@ -1,0 +1,36 @@
+name: Finance Fun Daily
+
+on:
+  schedule:
+    - cron: "0 16 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Advance the simulated market by one day
+        run: python3 "finance fun/engine.py"
+
+      - name: Commit and push results
+        run: |
+          git config user.name "finance-fun-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add "finance fun/data" "finance fun/README.md"
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Finance fun: daily update"
+            git push origin HEAD:master
+          fi
