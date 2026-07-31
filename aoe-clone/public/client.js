@@ -1,5 +1,7 @@
 (() => {
-  const TILE = 28;
+  let TILE = 28;
+  const MIN_TILE = 14;
+  const MAX_TILE = 48;
   const TICK_MS = 100;
 
   const joinScreen = document.getElementById('joinScreen');
@@ -45,6 +47,7 @@
         joinScreen.classList.add('hidden');
         gameEl.classList.remove('hidden');
         resizeCanvas();
+        if (canvas.width < 500) TILE = 18;
         centerCameraOnSelf();
         requestAnimationFrame(loop);
       } else if (msg.type === 'state') {
@@ -107,6 +110,7 @@
     clampCamera();
   }
   window.addEventListener('resize', resizeCanvas);
+  window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 200));
 
   // ---------- Keyboard panning ----------
 
@@ -144,10 +148,13 @@
     return null;
   }
 
-  // ---------- Mouse input ----------
+  // ---------- Pointer input (mouse + touch share the same select/command logic) ----------
+
+  let pinch = null; // {startDist, startTile, startWorldMid}
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
+  // Mouse (desktop)
   canvas.addEventListener('mousedown', (e) => {
     const rect = canvas.getBoundingClientRect();
     const sx = e.clientX - rect.left;
@@ -160,7 +167,8 @@
       dragStart = { x: sx, y: sy };
       dragCurrent = { x: sx, y: sy };
     } else if (e.button === 2) {
-      handleRightClick(sx, sy);
+      const world = screenToWorld(sx, sy);
+      issueContextCommand(entityAt(world.x, world.y), world);
     }
   });
 
@@ -172,31 +180,116 @@
 
   window.addEventListener('mouseup', (e) => {
     if (e.button !== 0 || !dragStart) return;
-    const dx = Math.abs(dragCurrent.x - dragStart.x);
-    const dy = Math.abs(dragCurrent.y - dragStart.y);
-    if (dx < 4 && dy < 4) {
-      handleLeftClick(dragStart.x, dragStart.y);
-    } else {
-      handleDragSelect(dragStart, dragCurrent);
-    }
+    finishPointer();
     dragStart = null;
     dragCurrent = null;
   });
 
-  function handleLeftClick(sx, sy) {
+  // Touch (mobile / iOS) — one finger selects/drags/commands, two fingers pinch-zoom + pan.
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    if (e.touches.length === 1) {
+      pinch = null;
+      const sx = e.touches[0].clientX - rect.left;
+      const sy = e.touches[0].clientY - rect.top;
+      if (pendingBuild) {
+        placeBuildingAt(sx, sy);
+        return;
+      }
+      dragStart = { x: sx, y: sy };
+      dragCurrent = { x: sx, y: sy };
+    } else if (e.touches.length === 2) {
+      dragStart = null;
+      dragCurrent = null;
+      pinch = beginPinch(e.touches, rect);
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    if (pinch && e.touches.length === 2) {
+      updatePinch(e.touches, rect);
+    } else if (dragStart && e.touches.length === 1) {
+      dragCurrent = { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    if (pinch) {
+      if (e.touches.length < 2) pinch = null;
+      return;
+    }
+    if (dragStart && dragCurrent) finishPointer();
+    dragStart = null;
+    dragCurrent = null;
+  }, { passive: false });
+
+  canvas.addEventListener('touchcancel', () => {
+    pinch = null;
+    dragStart = null;
+    dragCurrent = null;
+  });
+
+  function touchDist(touches) {
+    return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+  }
+  function touchMid(touches, rect) {
+    return {
+      x: (touches[0].clientX + touches[1].clientX) / 2 - rect.left,
+      y: (touches[0].clientY + touches[1].clientY) / 2 - rect.top,
+    };
+  }
+  function beginPinch(touches, rect) {
+    const mid = touchMid(touches, rect);
+    return { startDist: touchDist(touches), startTile: TILE, startWorldMid: screenToWorld(mid.x, mid.y) };
+  }
+  function updatePinch(touches, rect) {
+    const ratio = touchDist(touches) / pinch.startDist;
+    TILE = Math.max(MIN_TILE, Math.min(MAX_TILE, pinch.startTile * ratio));
+    const mid = touchMid(touches, rect);
+    camera.x = pinch.startWorldMid.x - mid.x / TILE;
+    camera.y = pinch.startWorldMid.y - mid.y / TILE;
+    clampCamera();
+  }
+
+  function finishPointer() {
+    const dx = Math.abs(dragCurrent.x - dragStart.x);
+    const dy = Math.abs(dragCurrent.y - dragStart.y);
+    if (dx < 6 && dy < 6) {
+      handleTap(dragStart.x, dragStart.y);
+    } else {
+      handleDragSelect(dragStart, dragCurrent);
+    }
+  }
+
+  // Tapping/clicking one of your own units or buildings selects it. Tapping anything
+  // else while you have a selection issues the context-appropriate command (this is
+  // what right-click does on desktop, and doubles as "tap to command" on touch).
+  function handleTap(sx, sy) {
     const world = screenToWorld(sx, sy);
     const hit = entityAt(world.x, world.y);
-    selectedUnitIds.clear();
-    selectedBuildingId = null;
+
     if (hit && hit.kind === 'unit' && hit.obj.ownerId === myId) {
-      selectedUnitIds.add(hit.obj.id);
-    } else if (hit && hit.kind === 'building') {
-      selectedBuildingId = hit.obj.id;
-    } else if (hit && hit.kind === 'unit') {
-      // inspecting an enemy unit: no control, just info
+      selectedUnitIds.clear();
       selectedBuildingId = null;
+      selectedUnitIds.add(hit.obj.id);
+      renderActions();
+      return;
     }
-    renderActions();
+    if (hit && hit.kind === 'building' && hit.obj.ownerId === myId) {
+      selectedUnitIds.clear();
+      selectedBuildingId = hit.obj.id;
+      renderActions();
+      return;
+    }
+    if (selectedUnitIds.size > 0 || selectedBuildingId) {
+      issueContextCommand(hit, world);
+      return;
+    }
+    deselectAll();
   }
 
   function handleDragSelect(start, end) {
@@ -212,10 +305,7 @@
     renderActions();
   }
 
-  function handleRightClick(sx, sy) {
-    const world = screenToWorld(sx, sy);
-    const hit = entityAt(world.x, world.y);
-
+  function issueContextCommand(hit, world) {
     if (selectedUnitIds.size > 0) {
       const ids = [...selectedUnitIds];
       if (hit && hit.kind === 'resource') {
@@ -227,13 +317,18 @@
       }
       return;
     }
-
     if (selectedBuildingId) {
       const b = curState.buildings.find((bb) => bb.id === selectedBuildingId);
       if (b && b.ownerId === myId && !hit) {
         sendCommand({ action: 'setRally', buildingId: b.id, x: world.x, y: world.y });
       }
     }
+  }
+
+  function deselectAll() {
+    selectedUnitIds.clear();
+    selectedBuildingId = null;
+    renderActions();
   }
 
   function placeBuildingAt(sx, sy) {
@@ -277,8 +372,8 @@
 
     if (ownSelectedUnits.length > 0) {
       selectionInfo.textContent = summarizeUnits(ownSelectedUnits);
-      const stopBtn = makeBtn('Stop', () => sendCommand({ action: 'stop', unitIds: [...selectedUnitIds] }));
-      actionsEl.appendChild(stopBtn);
+      actionsEl.appendChild(makeBtn('Stop', () => sendCommand({ action: 'stop', unitIds: [...selectedUnitIds] })));
+      actionsEl.appendChild(makeBtn('Deselect', deselectAll));
     }
 
     if (villagerSelected) {
@@ -294,8 +389,9 @@
       }
       if (pendingBuild) {
         const hint = document.createElement('div');
-        hint.textContent = 'Click on the map to place the building (Esc to cancel).';
+        hint.textContent = 'Tap the map to place the building.';
         actionsEl.appendChild(hint);
+        actionsEl.appendChild(makeBtn('Cancel', () => { pendingBuild = null; renderActions(); }));
       }
     }
 
@@ -306,6 +402,7 @@
         selectionInfo.textContent = `${bt.name} — HP ${Math.ceil(b.hp)}/${b.maxHp}` +
           (b.constructed ? '' : ` (building ${Math.floor(b.buildProgress * 100)}%)`) +
           (b.trainQueue.length ? ` — queue: ${b.trainQueue.length}` : '');
+        actionsEl.appendChild(makeBtn('Deselect', deselectAll));
         if (b.ownerId === myId && b.constructed) {
           for (const unitKey of bt.trains) {
             const ut = staticInfo.unitTypes[unitKey];

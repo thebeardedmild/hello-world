@@ -1,9 +1,12 @@
-* { box-sizing: border-box; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body {
   margin: 0; padding: 0; height: 100%;
   background: #1b1f17; color: #eee;
   font-family: 'Trebuchet MS', Verdana, sans-serif;
   overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+  -webkit-user-select: none; user-select: none;
 }
 
 .hidden { display: none !important; }
@@ -11,19 +14,22 @@ html, body {
 #joinScreen {
   position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
   background: radial-gradient(circle at center, #2c3a1f, #10130c);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 #joinBox {
   background: #23281c; border: 2px solid #6b5a2e; border-radius: 8px;
-  padding: 32px 40px; text-align: center; max-width: 420px;
+  padding: 32px 40px; text-align: center; max-width: 420px; width: 100%;
 }
 #joinBox h1 { color: #e8c96a; margin-top: 0; }
 #joinBox input {
-  width: 100%; padding: 10px; font-size: 16px; margin: 12px 0;
+  width: 100%; padding: 12px; font-size: 16px; margin: 12px 0;
   border-radius: 4px; border: 1px solid #6b5a2e; background: #171a12; color: #eee;
+  -webkit-user-select: text; user-select: text;
 }
 #joinBox button, .actionBtn {
   background: #6b8f3f; color: #fff; border: none; border-radius: 4px;
-  padding: 10px 18px; font-size: 15px; cursor: pointer;
+  padding: 12px 18px; font-size: 15px; cursor: pointer; touch-action: manipulation;
+  min-height: 44px;
 }
 #joinBox button:hover, .actionBtn:hover { background: #7fa84a; }
 .actionBtn.active { background: #e8c96a; color: #1b1f17; }
@@ -33,25 +39,51 @@ html, body {
 
 #topbar {
   display: flex; align-items: center; gap: 18px; padding: 6px 14px;
+  padding-top: calc(6px + env(safe-area-inset-top));
+  padding-left: calc(14px + env(safe-area-inset-left));
+  padding-right: calc(14px + env(safe-area-inset-right));
   background: #2a2f21; border-bottom: 2px solid #6b5a2e; font-size: 15px;
+  flex-wrap: wrap; row-gap: 4px;
 }
 .resource { display: flex; align-items: center; gap: 6px; }
-.icon { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+.icon { width: 14px; height: 14px; border-radius: 3px; display: inline-block; flex: none; }
 .icon.wood { background: #8a5a2b; }
 .icon.food { background: #c93b3b; }
 .icon.gold { background: #d9b23c; }
 .icon.pop { background: #6b8f3f; }
-#playerList { margin-left: auto; display: flex; gap: 12px; font-size: 13px; }
+#playerList { margin-left: auto; display: flex; gap: 12px; font-size: 13px; flex-wrap: wrap; }
 .playerTag { display: flex; align-items: center; gap: 4px; }
-.playerTag .swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.playerTag .swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
 .playerTag.eliminated { opacity: 0.4; text-decoration: line-through; }
 
-canvas { flex: 1; display: block; background: #3a5320; cursor: crosshair; }
+canvas {
+  flex: 1; display: block; background: #3a5320; cursor: crosshair;
+  touch-action: none;
+}
 
 #hud {
   background: #23281c; border-top: 2px solid #6b5a2e; padding: 8px 14px;
-  display: flex; gap: 20px; align-items: center; min-height: 54px; flex-wrap: wrap;
+  padding-left: calc(14px + env(safe-area-inset-left));
+  padding-right: calc(14px + env(safe-area-inset-right));
+  display: flex; gap: 14px; align-items: center; min-height: 54px;
+  flex-wrap: wrap;
 }
-#selectionInfo { min-width: 220px; font-size: 14px; }
+#selectionInfo { min-width: 160px; font-size: 14px; }
 #actions { display: flex; gap: 8px; flex-wrap: wrap; }
-#helpBar { font-size: 11px; color: #9aa08c; text-align: center; padding: 2px; background: #1b1f17; }
+#helpBar {
+  font-size: 11px; color: #9aa08c; text-align: center; padding: 2px;
+  padding-bottom: calc(2px + env(safe-area-inset-bottom));
+  background: #1b1f17;
+}
+
+@media (max-width: 640px) {
+  #topbar { font-size: 13px; gap: 10px; }
+  #playerList { font-size: 11px; gap: 8px; }
+  #hud {
+    flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; touch-action: pan-x;
+  }
+  #selectionInfo { min-width: 130px; font-size: 12px; flex: none; }
+  #actions { flex-wrap: nowrap; }
+  .actionBtn { font-size: 13px; padding: 10px 12px; white-space: nowrap; }
+  #helpBar { display: none; }
+}

@@ -41,7 +41,38 @@ Every player who opens the page and clicks Join gets their own Town Center +
 3 villagers on the map. Up to 8 players are supported (spawn points are
 predefined around the map edges).
 
-## Controls
+## Playing on iOS / over cellular data
+
+The client works in mobile Safari with touch controls (see below), and
+because each player's phone just makes an outbound WebSocket connection to
+the host, playing over cellular data works the same as playing over wifi —
+carrier-side NAT doesn't block outbound connections. A few tips for a
+smoother cellular experience:
+
+- **Prefer a tunnel that gives you HTTPS** (e.g. Cloudflare Tunnel, ngrok)
+  over raw port-forwarding. Some cellular carriers/captive portals are
+  fussier about plain HTTP on non-standard ports, and HTTPS avoids that.
+  The client already auto-selects `wss://` when the page is loaded over
+  `https://`, so no config changes are needed on your end.
+- If you do port-forward instead, forwarding to the standard port `443` (set
+  `PORT=443` when starting, may require `sudo`/root on some systems) tends to
+  traverse carrier networks more reliably than an arbitrary high port.
+- Add the page to the iOS home screen (Share → Add to Home Screen) for a
+  full-screen, browser-chrome-free experience.
+
+### Touch controls (iOS / mobile)
+
+- **Tap**: select one of your own units/buildings, or — if you already have
+  a selection — issue the context command on whatever you tapped (gather on
+  a resource, attack an enemy, move to empty ground). This is the touch
+  equivalent of desktop right-click.
+- **Drag**: box-select multiple of your own units.
+- **Pinch**: zoom in/out. **Two-finger drag**: pan the camera.
+- **Build buttons**: pick a building, then tap the map to place it (a
+  **Cancel** button appears while placing).
+- **Deselect / Stop buttons**: appear whenever you have a selection.
+
+## Desktop controls
 
 - **Left-click**: select a unit or building.
 - **Left-drag**: box-select multiple of your own units.
@@ -50,7 +81,7 @@ predefined around the map edges).
   - on an enemy unit/building → attack (military units only)
   - on empty ground → move (or set a rally point if a building is selected)
 - **Build buttons** (appear when villagers are selected): pick a building,
-  then left-click the map to place it — selected villagers walk over and
+  then click the map to place it — selected villagers walk over and
   construct it.
 - **Train buttons** (appear when your own building is selected): queue units.
 - **Arrow keys / WASD**: pan the camera. **Esc**: cancel building placement.
