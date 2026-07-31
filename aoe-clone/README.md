@@ -36,21 +36,45 @@ If location access fails or you're testing without GPS (e.g. indoors, or
 from a machine with no location hardware), the join screen offers a **demo
 location** fallback so you can still try the game out.
 
-## Playing with friends over the internet / cellular
+## Hosting for a group (the important part: HTTPS)
 
-Friends' phones just need to reach your server's address — carrier-side NAT
-on cellular doesn't block that, since it's an outbound connection from their
-phone, same as any wifi network:
+Browsers only expose the Geolocation API on **secure origins** — `https://`
+or `localhost`. A plain `http://192.168.x.x:3000` link works for *you* (via
+localhost) but will generally **fail to get a location on everyone else's
+phones**, even on the same wifi. So for more than one person, you need
+HTTPS, not just a reachable address.
 
-- **Same wifi**: give them `http://<your-local-ip>:3000`.
-- **Different networks / cellular**: prefer a tunnel that gives you HTTPS
-  (Cloudflare Tunnel, ngrok, etc.) over raw port-forwarding — some carriers
-  are fussier about plain HTTP on non-standard ports, and the client already
-  auto-selects `wss://` when the page is loaded over `https://`.
-- **Cloud box**: run `npm start` on any VM with the port open in its
-  firewall/security group and share `http://<vm-ip>:3000`.
+The easiest way:
+
+```bash
+npm run host
+```
+
+This starts the server and, if you have
+[`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+installed (`brew install cloudflared` on macOS, `winget install --id
+Cloudflare.cloudflared` on Windows), automatically opens a free HTTPS
+tunnel and prints a shareable link plus a QR code you can hold up for
+everyone to scan — no typing a URL into 6 phones. If `cloudflared` isn't
+found, `npm run host` still starts the server and prints the manual
+install/usage instructions instead.
+
+Keep the terminal running for the whole game — closing it drops everyone
+(there's no reconnect yet, see Known limitations).
+
+### Other ways to get HTTPS
+
+- **ngrok** or another tunnel: `ngrok http 3000`, then share the `https://`
+  URL it prints — works the same way as `cloudflared`, use whichever you
+  already have.
+- **Cloud VM**: run the server on a VM with a real domain + TLS (or a
+  tunnel from the VM), then share `https://<your-domain>`.
 - Add the page to your iOS home screen (Share → Add to Home Screen) for a
-  full-screen, browser-chrome-free experience.
+  full-screen, browser-chrome-free experience once everyone's joined.
+
+Playing over cellular works the same as wifi once you have an HTTPS link —
+each phone just makes an outbound connection, so carrier-side NAT doesn't
+get in the way.
 
 ## Controls
 
@@ -87,6 +111,9 @@ phone, same as any wifi network:
 - `public/` — browser client: a live [Leaflet](https://leafletjs.com) map
   over OpenStreetMap tiles, geolocation-based join flow, and a WebSocket
   connection to the server. No build step required.
+- `scripts/host.js` (`npm run host`) — starts the server and, if
+  `cloudflared` is installed, an HTTPS tunnel with the shareable link
+  printed as text and a QR code.
 - `ios-ar/` — native iOS AR companion app **scaffold** (Swift/SwiftUI/
   ARKit/RealityKit source + Xcode setup instructions). Speaks the same
   WebSocket protocol as `public/client.js`. See `ios-ar/README-ios-ar.md`

@@ -4,11 +4,13 @@
   "description": "A browser-playable real-time strategy game (Age of Empires-style) with an authoritative multiplayer server.",
   "main": "server/index.js",
   "scripts": {
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "host": "node scripts/host.js"
   },
   "license": "MIT",
   "dependencies": {
     "leaflet": "^1.9.4",
+    "qrcode-terminal": "^0.12.0",
     "ws": "^8.18.0"
   }
 }
