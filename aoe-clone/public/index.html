@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Empires Clone</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="joinScreen">
+  <div id="joinBox">
+    <h1>Empires Clone</h1>
+    <p>Gather resources, build a base, train an army, and fight your friends &mdash; live over a shared server.</p>
+    <input id="nameInput" type="text" maxlength="20" placeholder="Your name" autocomplete="off">
+    <button id="joinBtn">Join Game</button>
+    <p id="joinError" class="error"></p>
+  </div>
+</div>
+
+<div id="game" class="hidden">
+  <div id="topbar">
+    <div class="resource"><span class="icon wood"></span><span id="resWood">0</span></div>
+    <div class="resource"><span class="icon food"></span><span id="resFood">0</span></div>
+    <div class="resource"><span class="icon gold"></span><span id="resGold">0</span></div>
+    <div class="resource"><span class="icon pop"></span><span id="resPop">0/0</span></div>
+    <div id="playerList"></div>
+  </div>
+  <canvas id="canvas"></canvas>
+  <div id="hud">
+    <div id="selectionInfo">Nothing selected</div>
+    <div id="actions"></div>
+  </div>
+  <div id="helpBar">
+    Left-drag: select &middot; Right-click: move / gather / attack &middot; Buttons below: build &amp; train
+  </div>
+</div>
+
+<script src="client.js"></script>
+</body>
+</html>
