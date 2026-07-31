@@ -1,0 +1,28 @@
+<!--
+  Merge these keys into your Xcode project's Info (Target > Info tab, or your
+  Info.plist file if you generated one). See README-ios-ar.md for context.
+-->
+<plist>
+<dict>
+  <!-- Required: the app reads your GPS position to place your base and to
+       compute AR bearings/distances to other entities. -->
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>Empires Clone uses your location to place your base in the game world and to overlay units around you in AR.</string>
+
+  <!-- Required: ARKit needs camera access for AR mode. -->
+  <key>NSCameraUsageDescription</key>
+  <string>Empires Clone uses the camera for AR mode, overlaying game units on the real world.</string>
+
+  <!-- DEVELOPMENT ONLY: the game server speaks plain ws:// (see the main
+       README's cellular-play section for why wss:// via a tunnel is the
+       better answer). App Transport Security blocks plaintext WebSocket
+       connections by default; this exception is scoped to local/private
+       networks only. Remove it (and use a wss:// tunnel host instead) for
+       anything beyond testing on your own LAN. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
+</dict>
+</plist>

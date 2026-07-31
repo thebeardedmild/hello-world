@@ -3,22 +3,22 @@ const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
 const { Game } = require('./game');
-const { TICK_MS } = require('./config');
+const { TICK_MS, FAR_JOIN_WARNING_M } = require('./config');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const LEAFLET_DIR = path.join(__dirname, '..', 'node_modules', 'leaflet', 'dist');
 
 const MIME = {
   '.html': 'text/html',
   '.js': 'text/javascript',
   '.css': 'text/css',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
 };
 
-const server = http.createServer((req, res) => {
-  const urlPath = req.url.split('?')[0];
-  const relPath = urlPath === '/' ? '/index.html' : urlPath;
-  const fullPath = path.normalize(path.join(PUBLIC_DIR, relPath));
-  if (!fullPath.startsWith(PUBLIC_DIR)) {
+function serveFile(res, fullPath, baseDir) {
+  if (!fullPath.startsWith(baseDir)) {
     res.writeHead(403);
     res.end('Forbidden');
     return;
@@ -33,6 +33,20 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
     res.end(data);
   });
+}
+
+const server = http.createServer((req, res) => {
+  const urlPath = req.url.split('?')[0];
+  // Self-host Leaflet's dist files instead of depending on a CDN — the map
+  // still needs internet access to fetch live OpenStreetMap tiles, but the
+  // library itself works even if unpkg/jsdelivr are unreachable.
+  if (urlPath.startsWith('/vendor/leaflet/')) {
+    const rel = urlPath.slice('/vendor/leaflet/'.length);
+    serveFile(res, path.normalize(path.join(LEAFLET_DIR, rel)), LEAFLET_DIR);
+    return;
+  }
+  const relPath = urlPath === '/' ? '/index.html' : urlPath;
+  serveFile(res, path.normalize(path.join(PUBLIC_DIR, relPath)), PUBLIC_DIR);
 });
 
 const wss = new WebSocket.Server({ server });
@@ -49,9 +63,22 @@ wss.on('connection', (ws) => {
       return;
     }
     if (msg.type === 'join' && playerId === null) {
-      playerId = game.addPlayer(msg.name, ws);
-      ws.send(JSON.stringify({ type: 'welcome', playerId, ...game.getStaticInfo() }));
-      console.log(`Player joined: id=${playerId} name=${msg.name}`);
+      const result = game.addPlayer(msg.name, msg.lat, msg.lng, ws);
+      if (!result) {
+        ws.send(JSON.stringify({ type: 'error', message: 'A valid location (lat/lng) is required to join.' }));
+        return;
+      }
+      playerId = result.playerId;
+      ws.send(JSON.stringify({
+        type: 'welcome',
+        playerId,
+        originLat: game.origin.lat,
+        originLng: game.origin.lng,
+        distanceFromOriginM: result.distanceFromOriginM,
+        farFromOrigin: result.distanceFromOriginM > FAR_JOIN_WARNING_M,
+        ...game.getStaticInfo(),
+      }));
+      console.log(`Player joined: id=${playerId} name=${msg.name} distanceFromOriginM=${result.distanceFromOriginM}`);
     } else if (msg.type === 'command' && playerId !== null) {
       game.handleCommand(playerId, msg.cmd);
     }
@@ -76,6 +103,6 @@ setInterval(() => {
 }, TICK_MS);
 
 server.listen(PORT, () => {
-  console.log(`Age of Empires clone server listening on http://localhost:${PORT}`);
-  console.log('Share your IP/port (or a tunnel URL) with friends so they can connect.');
+  console.log(`Empires Clone (real-world mode) listening on http://localhost:${PORT}`);
+  console.log('Share your IP/port (or a tunnel URL) with friends so they can connect from nearby.');
 });

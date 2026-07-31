@@ -1,14 +1,13 @@
 const {
-  MAP_W, MAP_H, PLAYER_COLORS, SPAWN_POINTS, RESOURCE_TYPES, RESOURCE_NODE,
-  STARTING_RESOURCES, UNIT_TYPES, BUILDING_TYPES, MAX_POP_CAP, MAX_TRAIN_QUEUE,
+  PLAYER_COLORS, PLAY_RADIUS_M, MAX_COMMAND_RADIUS_M,
+  RESOURCE_TYPES, RESOURCE_NODE, STARTING_RESOURCES,
+  RESOURCE_GATHER_RANGE_M, DROPOFF_RANGE_M, BUILD_RANGE_M,
+  UNIT_TYPES, BUILDING_TYPES, MAX_POP_CAP, MAX_TRAIN_QUEUE,
 } = require('./config');
+const { toLocal, toLatLng } = require('./latlng');
 
 function dist(ax, ay, bx, by) {
   return Math.hypot(ax - bx, ay - by);
-}
-
-function clamp(v, lo, hi) {
-  return Math.max(lo, Math.min(hi, v));
 }
 
 class Game {
@@ -18,9 +17,8 @@ class Game {
     this.buildings = new Map();
     this.resourceNodes = new Map();
     this.nextId = 1;
-    this.spawnIndex = 0;
     this.tick = 0;
-    this.generateMap();
+    this.origin = null; // {lat, lng} — set by the first player to join
   }
 
   genId() {
@@ -29,26 +27,34 @@ class Game {
 
   // ---------- World setup ----------
 
-  generateMap() {
-    const rng = mulberry32(1337); // deterministic layout so all clients agree on nothing except server truth anyway
-    const clusterCount = 26;
+  // Scatters a small cluster of wood/food/gold nodes near a local point —
+  // called once for the match origin and again near each new player's spawn
+  // so everyone has something close by to gather.
+  addStartingResourceCluster(center) {
+    const offsets = [
+      { type: 'wood', dx: 10, dy: -10 },
+      { type: 'wood', dx: 14, dy: -6 },
+      { type: 'food', dx: -10, dy: 8 },
+      { type: 'gold', dx: -12, dy: -10 },
+    ];
+    for (const o of offsets) this.addResourceNode(o.type, center.x + o.dx, center.y + o.dy);
+  }
+
+  seedNeutralResources() {
+    const rng = mulberry32(1337);
+    const clusterCount = 14;
     for (let i = 0; i < clusterCount; i++) {
       const type = RESOURCE_TYPES[Math.floor(rng() * RESOURCE_TYPES.length)];
-      const cx = 3 + rng() * (MAP_W - 6);
-      const cy = 3 + rng() * (MAP_H - 6);
+      const angle = rng() * Math.PI * 2;
+      const radius = 25 + rng() * PLAY_RADIUS_M;
+      const cx = Math.cos(angle) * radius;
+      const cy = Math.sin(angle) * radius;
       const nodesInCluster = type === 'gold' ? 1 : 2 + Math.floor(rng() * 3);
       for (let n = 0; n < nodesInCluster; n++) {
-        const x = clamp(cx + (rng() - 0.5) * 3, 1, MAP_W - 2);
-        const y = clamp(cy + (rng() - 0.5) * 3, 1, MAP_H - 2);
+        const x = cx + (rng() - 0.5) * 20;
+        const y = cy + (rng() - 0.5) * 20;
         this.addResourceNode(type, x, y);
       }
-    }
-    // Guarantee resources near every spawn point.
-    for (const sp of SPAWN_POINTS) {
-      this.addResourceNode('wood', sp.x + 2.5, sp.y - 2.5);
-      this.addResourceNode('wood', sp.x + 3, sp.y - 1.5);
-      this.addResourceNode('food', sp.x - 2.5, sp.y + 2);
-      this.addResourceNode('gold', sp.x - 3, sp.y - 2.5);
     }
   }
 
@@ -61,42 +67,49 @@ class Game {
   }
 
   getStaticInfo() {
-    return {
-      mapWidth: MAP_W, mapHeight: MAP_H,
-      unitTypes: UNIT_TYPES, buildingTypes: BUILDING_TYPES,
-    };
+    return { unitTypes: UNIT_TYPES, buildingTypes: BUILDING_TYPES, playRadiusM: PLAY_RADIUS_M };
   }
 
   // ---------- Players ----------
 
-  addPlayer(name, ws) {
+  // Returns { playerId, distanceFromOriginM } or null if lat/lng are invalid.
+  addPlayer(name, lat, lng, ws) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+    const isFirst = this.origin === null;
+    if (isFirst) {
+      this.origin = { lat, lng };
+      this.seedNeutralResources();
+    }
+
     const id = this.genId();
     const color = PLAYER_COLORS[this.players.size % PLAYER_COLORS.length];
-    const spawn = SPAWN_POINTS[this.spawnIndex % SPAWN_POINTS.length];
-    this.spawnIndex++;
+    const local = toLocal(lat, lng, this.origin);
     const player = {
       id, name: String(name).slice(0, 20) || `Player${id}`, ws, color,
       resources: { ...STARTING_RESOURCES }, eliminated: false,
     };
     this.players.set(id, player);
-    this.spawnStartingBase(player, spawn);
-    return id;
+    this.spawnStartingBase(player, local);
+    if (!isFirst) this.addStartingResourceCluster(local);
+
+    return { playerId: id, distanceFromOriginM: Math.round(dist(0, 0, local.x, local.y)) };
   }
 
-  spawnStartingBase(player, spawn) {
+  spawnStartingBase(player, center) {
     const tcId = this.genId();
     const tcType = BUILDING_TYPES.townCenter;
     this.buildings.set(tcId, {
-      id: tcId, ownerId: player.id, type: 'townCenter', x: spawn.x, y: spawn.y,
+      id: tcId, ownerId: player.id, type: 'townCenter', x: center.x, y: center.y,
       hp: tcType.hp, maxHp: tcType.hp, constructed: true, buildProgress: 1,
-      trainQueue: [], rally: { x: spawn.x + 3, y: spawn.y + 3 },
+      trainQueue: [], rally: { x: center.x + 15, y: center.y + 15 },
     });
     for (let i = 0; i < 3; i++) {
       const uid = this.genId();
       const ut = UNIT_TYPES.villager;
       this.units.set(uid, {
         id: uid, ownerId: player.id, type: 'villager',
-        x: spawn.x - 2 + i, y: spawn.y + 2,
+        x: center.x - 6 + i * 6, y: center.y + 8,
         hp: ut.hp, maxHp: ut.hp, carryType: null, carryAmount: 0,
         order: null, cooldown: 0,
       });
@@ -131,58 +144,59 @@ class Game {
     return ids.map((id) => this.units.get(id)).filter((u) => u && u.ownerId === player.id);
   }
 
+  // Converts a command's lat/lng into a local point clamped to the play area,
+  // or null if the coordinates are missing/invalid.
+  targetLocal(cmd) {
+    if (!Number.isFinite(cmd.lat) || !Number.isFinite(cmd.lng)) return null;
+    const p = toLocal(cmd.lat, cmd.lng, this.origin);
+    const d = dist(0, 0, p.x, p.y);
+    if (d > MAX_COMMAND_RADIUS_M) {
+      const scale = MAX_COMMAND_RADIUS_M / d;
+      return { x: p.x * scale, y: p.y * scale };
+    }
+    return p;
+  }
+
   cmdMove(player, cmd) {
     const units = this.ownedUnits(player, cmd.unitIds);
-    const x = clamp(Number(cmd.x), 0, MAP_W);
-    const y = clamp(Number(cmd.y), 0, MAP_H);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-    for (const u of units) {
-      u.order = { type: 'move', targetPos: { x, y } };
-    }
+    const target = this.targetLocal(cmd);
+    if (!target) return;
+    for (const u of units) u.order = { type: 'move', targetPos: target };
   }
 
   cmdGather(player, cmd) {
     const node = this.resourceNodes.get(cmd.resourceId);
     if (!node) return;
     const units = this.ownedUnits(player, cmd.unitIds).filter((u) => u.type === 'villager');
-    for (const u of units) {
-      u.order = { type: 'gather', targetId: node.id };
-    }
+    for (const u of units) u.order = { type: 'gather', targetId: node.id };
   }
 
   cmdBuild(player, cmd) {
     const buildingType = BUILDING_TYPES[cmd.buildingType];
     if (!buildingType || cmd.buildingType === 'townCenter') return;
-    const x = clamp(Number(cmd.x), 0, MAP_W);
-    const y = clamp(Number(cmd.y), 0, MAP_H);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    const target = this.targetLocal(cmd);
+    if (!target) return;
     const villagers = this.ownedUnits(player, cmd.unitIds).filter((u) => u.type === 'villager');
     if (villagers.length === 0) return;
 
     for (const [k, amt] of Object.entries(buildingType.cost)) {
       if ((player.resources[k] || 0) < amt) return; // can't afford
     }
-    // simple footprint overlap check against existing buildings
     const half = buildingType.size / 2;
     for (const b of this.buildings.values()) {
-      const otherType = BUILDING_TYPES[b.type];
-      const otherHalf = otherType.size / 2;
-      if (Math.abs(b.x - x) < half + otherHalf && Math.abs(b.y - y) < half + otherHalf) return;
+      const otherHalf = BUILDING_TYPES[b.type].size / 2;
+      if (Math.abs(b.x - target.x) < half + otherHalf && Math.abs(b.y - target.y) < half + otherHalf) return;
     }
 
-    for (const [k, amt] of Object.entries(buildingType.cost)) {
-      player.resources[k] -= amt;
-    }
+    for (const [k, amt] of Object.entries(buildingType.cost)) player.resources[k] -= amt;
     const bid = this.genId();
     this.buildings.set(bid, {
-      id: bid, ownerId: player.id, type: cmd.buildingType, x, y,
+      id: bid, ownerId: player.id, type: cmd.buildingType, x: target.x, y: target.y,
       hp: Math.ceil(buildingType.hp * 0.1), maxHp: buildingType.hp,
       constructed: false, buildProgress: 0, trainQueue: [],
-      rally: { x, y: y + buildingType.size },
+      rally: { x: target.x, y: target.y + buildingType.size },
     });
-    for (const u of villagers) {
-      u.order = { type: 'build', targetId: bid };
-    }
+    for (const u of villagers) u.order = { type: 'build', targetId: bid };
   }
 
   cmdTrain(player, cmd) {
@@ -221,10 +235,9 @@ class Game {
   cmdSetRally(player, cmd) {
     const building = this.buildings.get(cmd.buildingId);
     if (!building || building.ownerId !== player.id) return;
-    const x = clamp(Number(cmd.x), 0, MAP_W);
-    const y = clamp(Number(cmd.y), 0, MAP_H);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-    building.rally = { x, y };
+    const target = this.targetLocal(cmd);
+    if (!target) return;
+    building.rally = target;
   }
 
   // ---------- Simulation ----------
@@ -262,6 +275,7 @@ class Game {
   }
 
   update(dt) {
+    if (!this.origin) return; // no match in progress yet
     this.tick++;
     this.updateUnits(dt);
     this.updateBuildings(dt);
@@ -291,7 +305,7 @@ class Game {
     const node = this.resourceNodes.get(unit.order.targetId);
     if (!node) { unit.order = null; return; }
     const d = dist(unit.x, unit.y, node.x, node.y);
-    if (d > 0.7) {
+    if (d > RESOURCE_GATHER_RANGE_M) {
       this.moveToward(unit, node.x, node.y, ut.speed, dt);
       return;
     }
@@ -310,7 +324,7 @@ class Game {
     const drop = this.nearestDropOff(unit.ownerId, unit.x, unit.y, unit.carryType);
     if (!drop) { unit.order = null; return; }
     const d = dist(unit.x, unit.y, drop.x, drop.y);
-    if (d > 1.2) {
+    if (d > BUILDING_TYPES[drop.type].size / 2 + DROPOFF_RANGE_M) {
       this.moveToward(unit, drop.x, drop.y, ut.speed, dt);
       return;
     }
@@ -333,11 +347,11 @@ class Game {
     if (building.constructed) { unit.order = null; return; }
     const bt = BUILDING_TYPES[building.type];
     const d = dist(unit.x, unit.y, building.x, building.y);
-    if (d > bt.size / 2 + 0.8) {
+    if (d > bt.size / 2 + BUILD_RANGE_M) {
       this.moveToward(unit, building.x, building.y, ut.speed, dt);
       return;
     }
-    building.buildProgress = clamp(building.buildProgress + dt / bt.buildTime, 0, 1);
+    building.buildProgress = clamp01(building.buildProgress + dt / bt.buildTime);
     building.hp = Math.ceil(bt.hp * (0.1 + 0.9 * building.buildProgress));
     if (building.buildProgress >= 1) {
       building.constructed = true;
@@ -350,7 +364,7 @@ class Game {
     const map = unit.order.targetKind === 'unit' ? this.units : this.buildings;
     const target = map.get(unit.order.targetId);
     if (!target || target.hp <= 0) { unit.order = null; return; }
-    const targetSize = unit.order.targetKind === 'building' ? BUILDING_TYPES[target.type].size / 2 : 0.35;
+    const targetSize = unit.order.targetKind === 'building' ? BUILDING_TYPES[target.type].size / 2 : 1;
     const d = dist(unit.x, unit.y, target.x, target.y);
     if (d > ut.range + targetSize) {
       this.moveToward(unit, target.x, target.y, ut.speed, dt);
@@ -388,7 +402,7 @@ class Game {
     const ut = UNIT_TYPES[unitType];
     const uid = this.genId();
     const angle = Math.random() * Math.PI * 2;
-    const spawnR = bt.size / 2 + 0.6;
+    const spawnR = bt.size / 2 + 2;
     this.units.set(uid, {
       id: uid, ownerId: building.ownerId, type: unitType,
       x: building.x + Math.cos(angle) * spawnR,
@@ -419,6 +433,8 @@ class Game {
   // ---------- Serialization ----------
 
   getState() {
+    if (!this.origin) return { tick: this.tick, players: [], units: [], buildings: [], resources: [] };
+    const origin = this.origin;
     const players = [...this.players.values()].map((p) => {
       const { used, cap } = this.populationFor(p.id);
       return {
@@ -429,18 +445,31 @@ class Game {
     return {
       tick: this.tick,
       players,
-      units: [...this.units.values()].map((u) => ({
-        id: u.id, ownerId: u.ownerId, type: u.type, x: u.x, y: u.y,
-        hp: u.hp, maxHp: u.maxHp, carryType: u.carryType, carryAmount: u.carryAmount,
-      })),
-      buildings: [...this.buildings.values()].map((b) => ({
-        id: b.id, ownerId: b.ownerId, type: b.type, x: b.x, y: b.y,
-        hp: b.hp, maxHp: b.maxHp, constructed: b.constructed, buildProgress: b.buildProgress,
-        trainQueue: b.trainQueue.map((q) => ({ unitType: q.unitType, timeRemaining: q.timeRemaining })),
-      })),
-      resources: [...this.resourceNodes.values()],
+      units: [...this.units.values()].map((u) => {
+        const { lat, lng } = toLatLng(u.x, u.y, origin);
+        return {
+          id: u.id, ownerId: u.ownerId, type: u.type, lat, lng,
+          hp: u.hp, maxHp: u.maxHp, carryType: u.carryType, carryAmount: u.carryAmount,
+        };
+      }),
+      buildings: [...this.buildings.values()].map((b) => {
+        const { lat, lng } = toLatLng(b.x, b.y, origin);
+        return {
+          id: b.id, ownerId: b.ownerId, type: b.type, lat, lng,
+          hp: b.hp, maxHp: b.maxHp, constructed: b.constructed, buildProgress: b.buildProgress,
+          trainQueue: b.trainQueue.map((q) => ({ unitType: q.unitType, timeRemaining: q.timeRemaining })),
+        };
+      }),
+      resources: [...this.resourceNodes.values()].map((r) => {
+        const { lat, lng } = toLatLng(r.x, r.y, origin);
+        return { id: r.id, type: r.type, lat, lng, amount: r.amount, maxAmount: r.maxAmount };
+      }),
     };
   }
+}
+
+function clamp01(v) {
+  return Math.max(0, Math.min(1, v));
 }
 
 function mulberry32(seed) {

@@ -5,8 +5,6 @@ html, body {
   font-family: 'Trebuchet MS', Verdana, sans-serif;
   overflow: hidden;
   overscroll-behavior: none;
-  touch-action: none;
-  -webkit-user-select: none; user-select: none;
 }
 
 .hidden { display: none !important; }
@@ -15,6 +13,7 @@ html, body {
   position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
   background: radial-gradient(circle at center, #2c3a1f, #10130c);
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  overflow-y: auto;
 }
 #joinBox {
   background: #23281c; border: 2px solid #6b5a2e; border-radius: 8px;
@@ -32,10 +31,15 @@ html, body {
   min-height: 44px;
 }
 #joinBox button:hover, .actionBtn:hover { background: #7fa84a; }
+#demoBtn { background: transparent; border: 1px solid #6b5a2e; margin-top: 8px; font-size: 12px; min-height: unset; padding: 8px 12px; }
 .actionBtn.active { background: #e8c96a; color: #1b1f17; }
 .error { color: #e05d5d; min-height: 1.2em; }
+#joinStatus { color: #9aa08c; font-size: 13px; min-height: 1.2em; }
 
-#game { position: fixed; inset: 0; display: flex; flex-direction: column; }
+#game {
+  position: fixed; inset: 0; display: flex; flex-direction: column;
+  -webkit-user-select: none; user-select: none;
+}
 
 #topbar {
   display: flex; align-items: center; gap: 18px; padding: 6px 14px;
@@ -43,7 +47,7 @@ html, body {
   padding-left: calc(14px + env(safe-area-inset-left));
   padding-right: calc(14px + env(safe-area-inset-right));
   background: #2a2f21; border-bottom: 2px solid #6b5a2e; font-size: 15px;
-  flex-wrap: wrap; row-gap: 4px;
+  flex-wrap: wrap; row-gap: 4px; z-index: 500; position: relative;
 }
 .resource { display: flex; align-items: center; gap: 6px; }
 .icon { width: 14px; height: 14px; border-radius: 3px; display: inline-block; flex: none; }
@@ -56,31 +60,43 @@ html, body {
 .playerTag .swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
 .playerTag.eliminated { opacity: 0.4; text-decoration: line-through; }
 
-canvas {
-  flex: 1; display: block; background: #3a5320; cursor: crosshair;
-  touch-action: none;
+#farBanner {
+  background: #7a3b1e; color: #fff; font-size: 12px; text-align: center;
+  padding: 4px 8px; z-index: 500; position: relative;
 }
+
+#map { flex: 1; background: #3a5320; }
 
 #hud {
   background: #23281c; border-top: 2px solid #6b5a2e; padding: 8px 14px;
   padding-left: calc(14px + env(safe-area-inset-left));
   padding-right: calc(14px + env(safe-area-inset-right));
   display: flex; gap: 14px; align-items: center; min-height: 54px;
-  flex-wrap: wrap;
+  flex-wrap: wrap; z-index: 500; position: relative;
 }
 #selectionInfo { min-width: 160px; font-size: 14px; }
 #actions { display: flex; gap: 8px; flex-wrap: wrap; }
 #helpBar {
   font-size: 11px; color: #9aa08c; text-align: center; padding: 2px;
   padding-bottom: calc(2px + env(safe-area-inset-bottom));
-  background: #1b1f17;
+  background: #1b1f17; position: relative; z-index: 500;
+}
+
+/* Smooth marker movement between server ticks instead of snapping. */
+.leaflet-marker-icon, .leaflet-interactive {
+  transition: transform 0.09s linear;
+}
+
+.unitLabel {
+  font-size: 10px; color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000;
+  white-space: nowrap; pointer-events: none;
 }
 
 @media (max-width: 640px) {
   #topbar { font-size: 13px; gap: 10px; }
   #playerList { font-size: 11px; gap: 8px; }
   #hud {
-    flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; touch-action: pan-x;
+    flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
   }
   #selectionInfo { min-width: 130px; font-size: 12px; flex: none; }
   #actions { flex-wrap: nowrap; }
