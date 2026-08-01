@@ -1,0 +1,13 @@
+{
+  "name": "gps-sandbox",
+  "version": "1.0.0",
+  "description": "Standalone GPS/NMEA simulator: broadcasts standard NMEA 0183 sentences over TCP with an HTTP control API for scripting movement (fixed position, waypoint routes, random walk) and realistic GPS jitter.",
+  "main": "lib/simulator.js",
+  "bin": {
+    "gps-sandbox": "bin/gps-sandbox.js"
+  },
+  "scripts": {
+    "start": "node bin/gps-sandbox.js"
+  },
+  "license": "MIT"
+}
