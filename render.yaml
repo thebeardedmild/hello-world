@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: empires-clone
+    runtime: node
+    rootDir: aoe-clone
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 18.20.0
