@@ -87,6 +87,15 @@ html, body {
   transition: transform 0.09s linear;
 }
 
+/* touch-action on an ancestor doesn't reliably propagate to SVG shape
+   elements in every engine (SVG geometry is a known gray area for the
+   touch-action spec) — without this, a box-select drag that crosses over a
+   rendered unit/resource marker gets aborted by a spurious pointercancel.
+   Setting it explicitly on the SVG layer and its paths closes that gap. */
+.leaflet-overlay-pane svg, .leaflet-interactive {
+  touch-action: none;
+}
+
 .unitLabel {
   font-size: 10px; color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000;
   white-space: nowrap; pointer-events: none;

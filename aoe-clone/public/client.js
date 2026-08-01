@@ -152,15 +152,28 @@
 
     map.on('click', (e) => onMapClick(e.latlng));
 
-    const container = map.getContainer();
-    container.addEventListener('pointerdown', onPointerDown);
-    container.addEventListener('pointermove', onPointerMove);
-    container.addEventListener('pointerup', onPointerUp);
+    // Capture-phase + window-level listeners: while box-selecting, a drag can
+    // start or end on top of a rendered unit/resource marker, and Leaflet's
+    // own per-layer handlers (bubble phase) would otherwise intercept the
+    // event first — capturing on window guarantees the drag always
+    // completes regardless of what's under the pointer at release time.
+    window.addEventListener('pointerdown', onPointerDown, { capture: true });
+    window.addEventListener('pointermove', onPointerMove, { capture: true });
+    window.addEventListener('pointerup', onPointerUp, { capture: true });
+    window.addEventListener('pointercancel', onPointerCancel, { capture: true });
   }
 
   // ---------- Selection / commands ----------
 
   function onEntityClick(kind, obj) {
+    // Placement mode wins over normal entity clicks — otherwise tapping
+    // anywhere near an existing unit/building/resource (very likely on a
+    // crowded map) hits that marker's own click handler first and silently
+    // reselects it instead of placing the building, with no feedback.
+    if (pendingBuild) {
+      placeBuildingAt(L.latLng(obj.lat, obj.lng));
+      return;
+    }
     if ((kind === 'unit' || kind === 'building') && obj.ownerId === myId) {
       selectedUnitIds.clear();
       selectedBuildingId = null;
@@ -232,19 +245,47 @@
   }
 
   function onPointerDown(e) {
-    if (!selectMode) return;
+    if (!selectMode || !map.getContainer().contains(e.target)) return;
+    // Prevent Leaflet's own per-marker handling (e.g. a unit's click-to-select)
+    // from also reacting to this same press while we're box-selecting.
+    e.stopPropagation();
+    // Explicit pointer capture is required here: without it, as soon as the
+    // drag crosses over one of the many rendered unit/resource markers (SVG
+    // paths with their own touch-action), Chromium/WebKit fire `pointercancel`
+    // mid-drag and the gesture silently dies — reproduced with plain mouse
+    // input too, not just touch. Capturing on the map container pins all
+    // subsequent events to it regardless of what's visually underneath.
+    const containerEl = map.getContainer();
+    if (containerEl.setPointerCapture) {
+      try { containerEl.setPointerCapture(e.pointerId); } catch { /* not critical if unsupported */ }
+    }
     rectStart = map.mouseEventToLatLng(e);
     rectLayer = L.rectangle([rectStart, rectStart], { color: '#e8c96a', weight: 1, fillOpacity: 0.1 }).addTo(map);
   }
 
   function onPointerMove(e) {
     if (!selectMode || !rectStart) return;
+    e.stopPropagation();
     rectLayer.setBounds(L.latLngBounds([rectStart, map.mouseEventToLatLng(e)]));
   }
 
   function onPointerUp(e) {
     if (!selectMode || !rectStart) return;
-    const bounds = L.latLngBounds([rectStart, map.mouseEventToLatLng(e)]);
+    e.stopPropagation();
+    finishBoxSelect(map.mouseEventToLatLng(e));
+  }
+
+  function onPointerCancel(e) {
+    if (!selectMode || !rectStart) return;
+    e.stopPropagation();
+    // A real device can legitimately cancel an in-progress gesture (a call
+    // coming in, the OS taking over, etc.) — finish the select with whatever
+    // the rectangle covered so far rather than leaving state stuck.
+    finishBoxSelect(map.mouseEventToLatLng(e));
+  }
+
+  function finishBoxSelect(endLatLng) {
+    const bounds = L.latLngBounds([rectStart, endLatLng]);
     selectedUnitIds.clear();
     selectedBuildingId = null;
     if (curState) {
