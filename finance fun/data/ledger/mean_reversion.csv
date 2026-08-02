@@ -24,3 +24,4 @@ day,date,ticker,action,shares,price
 8,2026-07-31,BETA,sell,0.1026,99.4252
 9,2026-08-01,ALPH,buy,103.8110,97.8568
 9,2026-08-01,BETA,sell,102.1446,99.4534
+10,2026-08-02,ALPH,sell,0.1038,97.8421
