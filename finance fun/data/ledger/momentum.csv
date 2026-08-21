@@ -9,3 +9,4 @@ day,date,ticker,action,shares,price
 26,2026-08-19,ALPH,sell,0.1014,95.6869
 27,2026-08-20,ALPH,sell,99.8132,96.8531
 27,2026-08-20,OMEG,buy,100.3236,96.3604
+28,2026-08-21,OMEG,sell,0.1000,96.6617
