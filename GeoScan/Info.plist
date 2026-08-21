@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSCameraUsageDescription</key>
+	<string>GeoScan uses the camera to colourise the LiDAR point cloud and to take the stills you tag with notes.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>GeoScan uses your location to tie the scan to real-world coordinates, so the cloud can be exported to GIS and survey software and the stills can be mapped.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>GeoScan reads the motion sensors to skip blurred frames and to steady the scan's elevation.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>GeoScan can save the stills you capture to your photo library.</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+		<string>arkit</string>
+	</array>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UIStatusBarStyle</key>
+	<string>UIStatusBarStyleLightContent</string>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<true/>
+</dict>
+</plist>
