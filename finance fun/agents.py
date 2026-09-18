@@ -48,17 +48,39 @@ class BuyAndHold(Agent):
 
 class Momentum(Agent):
     name = "Momentum"
-    description = "Every day, goes all-in on whichever ticker had the best trailing 10-day return."
+    description = (
+        "Goes all-in on the best trailing 10-day return -- but only when that leader is "
+        "actually rising and is clearly ahead of the runner-up. Otherwise sits in the basket."
+    )
+
+    #: the leader must have risen at least this much over the trailing window
+    MIN_TRAILING_RETURN = 0.0
+    #: ...and beat the runner-up by at least this margin, so a near-tie doesn't
+    #: count as a signal. Without these two guards the agent will happily stay
+    #: parked in a ticker that has gone flat, simply because nothing overtook it.
+    MIN_MARGIN = 0.01
 
     def target_weights(self, history, day):
         scores = {t: _trailing_return(history[t], 10) for t in TICKERS}
+        ranked = sorted(scores.values(), reverse=True)
         best = max(scores, key=scores.get)
+        margin = ranked[0] - ranked[1] if len(ranked) > 1 else ranked[0]
+        if scores[best] <= self.MIN_TRAILING_RETURN or margin < self.MIN_MARGIN:
+            return {t: 1 / len(TICKERS) for t in TICKERS}
         return {best: 1.0}
 
 
 class MeanReversion(Agent):
     name = "Mean Reversion"
-    description = "Buys whichever ticker is trading furthest below its 20-day moving average -- the dip buyer."
+    description = (
+        "Buys a ticker only once it trades a clear band below its 20-day moving average, "
+        "and steps back out to the basket as soon as that gap closes -- the dip buyer."
+    )
+
+    #: how far below the 20-day average a ticker must fall before it is a "dip".
+    #: A plain argmin has no such floor, so it locks onto whatever is in secular
+    #: decline -- permanently below its own average -- and never rotates again.
+    ENTRY_GAP = 0.02
 
     def target_weights(self, history, day):
         gaps = {}
@@ -67,7 +89,9 @@ class MeanReversion(Agent):
             last = history[t][-1] if history[t] else None
             gaps[t] = (sma - last) / sma if sma and last else 0.0
         best = max(gaps, key=gaps.get)
-        if gaps[best] <= 0:
+        # Below the band -- either never entered, or the dip has reverted. Either
+        # way, hold the basket rather than the falling knife.
+        if gaps[best] < self.ENTRY_GAP:
             return {t: 1 / len(TICKERS) for t in TICKERS}
         return {best: 1.0}
 
