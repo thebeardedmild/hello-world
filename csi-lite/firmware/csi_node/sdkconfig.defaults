@@ -1,0 +1,7 @@
+# CSI must be compiled into the WiFi driver
+CONFIG_ESP_WIFI_CSI_ENABLED=y
+CONFIG_ESP32_WIFI_CSI_ENABLED=y
+# 1 kHz tick so ping/ESP-NOW intervals of 5-10 ms are honoured
+CONFIG_FREERTOS_HZ=1000
+# Keep the radio awake; power save kills the CSI rate
+CONFIG_ESP_WIFI_STA_DISCONNECTED_PM_ENABLE=n

@@ -1,0 +1,37 @@
+menu "CSI Lite Node"
+
+    config CSI_WIFI_SSID
+        string "Router SSID"
+        default "myssid"
+
+    config CSI_WIFI_PASSWORD
+        string "Router password"
+        default "mypassword"
+
+    config CSI_NODE_ID
+        int "Node ID (0 = node A, 1 = node B)"
+        range 0 1
+        default 0
+
+    config CSI_SERVER_IP
+        string "Server IP (leave blank to auto-discover via the server's HELLO broadcast)"
+        default ""
+
+    config CSI_SERVER_PORT
+        int "Server UDP port for CSI data"
+        default 5500
+
+    config CSI_CONTROL_PORT
+        int "Node UDP port for control commands"
+        default 5501
+
+    config CSI_DEFAULT_RATE_HZ
+        int "Default sounding rate (Hz)"
+        range 1 500
+        default 100
+
+    config CSI_AUTOSTART
+        bool "Start streaming at boot (otherwise wait for START from the UI)"
+        default n
+
+endmenu

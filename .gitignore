@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+csi-lite/server/config.json
+csi-lite/firmware/csi_node/build/
+csi-lite/firmware/csi_node/sdkconfig
+csi-lite/firmware/csi_node/sdkconfig.old
