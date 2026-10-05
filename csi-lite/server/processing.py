@@ -1,13 +1,13 @@
 """CSI feature extraction.
 
-Three links are measured:
-    RA  router -> node A      (node A receives the router's ping replies)
-    RB  router -> node B      (node B receives the router's ping replies)
-    AB  node A <-> node B     (each node receives the other's ESP-NOW frames)
+With one router (R) and nodes A, B, C, ... the links are
+    R-A, R-B, ...   router -> node   (each node receives the router's ping replies)
+    A-B, A-C, ...   node <-> node    (each node receives the others' ESP-NOW frames)
 
-Each (link, receiving node) pair is a *stream*. AB therefore has two streams
-whose features are averaged; keeping them separate stops the two radios'
-different hardware phase responses from inflating the phase statistics.
+Each (link, receiving node) pair is a *stream*. A node-to-node link therefore
+has two streams (A hears B, B hears A) whose features are averaged; keeping
+them separate stops the two radios' different hardware phase responses from
+inflating the phase statistics.
 
 Per stream, every packet is turned into
     amp_db[52]  AGC-compensated amplitude: the ESP32's automatic gain control
@@ -26,26 +26,25 @@ user selects):
     motion      mean |packet-to-packet change| of amp_db  [dB]   fast motion
 The last three are reported as the excess over their empty-room level
 (measured during calibration), so an idle link reads ~0 instead of its
-noise floor.
-and one scalar:
+noise floor. Plus one scalar:
     rssi_atten  baseline RSSI - window mean RSSI          [dB]
 """
 import time
-from collections import deque
 
 import numpy as np
 
-from protocol import SUBCARRIERS, CsiPacket
+from protocol import SRC_ROUTER, SUBCARRIERS, CsiPacket, node_name
 
-LINKS = ("RA", "RB", "AB")
 VAR_KEYS = ("amp_std", "phase_std", "motion")
 _K = SUBCARRIERS.astype(np.float64)
+_NSC = len(SUBCARRIERS)
 
 
 def link_for(pkt: CsiPacket) -> str:
-    if pkt.src_kind == 1:
-        return "AB"
-    return "RA" if pkt.node_id == 0 else "RB"
+    rx = node_name(pkt.node_id)
+    if pkt.src_node == SRC_ROUTER:
+        return f"R-{rx}"
+    return "-".join(sorted((rx, node_name(pkt.src_node))))
 
 
 def sanitize_phase(h: np.ndarray) -> np.ndarray:
@@ -62,44 +61,44 @@ def agc_amp_db(h: np.ndarray, rssi: int) -> np.ndarray:
 
 
 class Stream:
-    MAX_SAMPLES = 2000
+    CAP = 1024  # samples kept per stream (~10 s at 100 Hz)
 
     def __init__(self):
-        self.t = deque(maxlen=self.MAX_SAMPLES)
-        self.amp = deque(maxlen=self.MAX_SAMPLES)
-        self.phase = deque(maxlen=self.MAX_SAMPLES)
-        self.rssi = deque(maxlen=self.MAX_SAMPLES)
-        self.base_amp = None   # (52,) dB
+        self.t = np.full(self.CAP, -np.inf)
+        self.amp = np.zeros((self.CAP, _NSC), np.float32)
+        self.phase = np.zeros((self.CAP, _NSC), np.float32)
+        self.rssi = np.zeros(self.CAP, np.float32)
+        self.i = 0                # next write slot
+        self.base_amp = None      # (52,) dB
         self.base_rssi = None
+        self.base_var = None      # empty-room level of the variability features
         self.calibrated = False
         self._calib = []
-        self.base_var = None   # empty-room level of the variability features
         self._calib_var = []
 
     def add(self, t: float, pkt: CsiPacket, calibrating: bool):
         if not np.any(pkt.csi):
             return
+        j = self.i % self.CAP
         amp = agc_amp_db(pkt.csi, pkt.rssi)
-        self.t.append(t)
-        self.amp.append(amp)
-        self.phase.append(sanitize_phase(pkt.csi))
-        self.rssi.append(pkt.rssi)
+        self.t[j] = t
+        self.amp[j] = amp
+        self.phase[j] = sanitize_phase(pkt.csi)
+        self.rssi[j] = pkt.rssi
+        self.i += 1
         if calibrating:
             self._calib.append((amp, pkt.rssi))
 
     def window(self, now: float, window_s: float):
-        n = 0
-        for ts in reversed(self.t):
-            if now - ts > window_s:
-                break
-            n += 1
+        n = int(np.count_nonzero(self.t >= now - window_s))
         if n < 3:
             return None
-        sl = slice(len(self.t) - n, len(self.t))
-        amp = np.array(list(self.amp)[sl])
-        phase = np.array(list(self.phase)[sl])
-        rssi = np.array(list(self.rssi)[sl], dtype=np.float64)
-        return amp, phase, rssi
+        idx = np.arange(self.i - n, self.i) % self.CAP  # oldest -> newest
+        return self.t[idx], self.amp[idx], self.phase[idx], self.rssi[idx]
+
+    def start_calibration(self):
+        self._calib = []
+        self._calib_var = []
 
     def finish_calibration(self):
         if self._calib:
@@ -117,13 +116,13 @@ class Stream:
         w = self.window(now, window_s)
         if w is None:
             return None
-        amp, phase, rssi = w
+        t, amp, phase, rssi = w
         amp_mean = amp.mean(axis=0)
         rssi_mean = float(rssi.mean())
 
         a = min(1.0, dt / max(tau_s, 1e-3))
         if self.base_amp is None:
-            self.base_amp, self.base_rssi = amp_mean.copy(), rssi_mean
+            self.base_amp, self.base_rssi = amp_mean.astype(np.float64), rssi_mean
         elif not self.calibrated:
             # No explicit calibration yet: track a slow running baseline so
             # the display still shows *changes*.
@@ -139,27 +138,25 @@ class Stream:
         if calibrating:
             self._calib_var.append(var)
         if self.base_var is None:
-            # Until calibrated, assume the quietest level seen so far is the floor.
-            self.base_var = {k: v.copy() for k, v in var.items()}
+            self.base_var = {k: v.astype(np.float64) for k, v in var.items()}
         elif not self.calibrated:
+            # Until calibrated, treat the quietest level seen as the floor.
             for k in VAR_KEYS:
                 b = self.base_var[k]
                 self.base_var[k] = np.where(var[k] < b, var[k], b + a * (var[k] - b))
-        span = self.t[-1] - self.t[-len(amp)]
+        span = t[-1] - t[0]
         return {
             "amp_atten": self.base_amp - amp_mean,
             **{k: var[k] - self.base_var[k] for k in VAR_KEYS},
-            "amp": amp[-1],
-            "base_amp": self.base_amp.copy(),
             "rssi_atten": self.base_rssi - rssi_mean,
             "rssi": rssi_mean,
-            "rate": (len(amp) - 1) / span if span > 0 else 0.0,
+            "rate": (len(t) - 1) / span if span > 0 else 0.0,
         }
 
 
 class Engine:
-    VECTOR_KEYS = ("amp_atten", "amp_std", "phase_std", "motion", "amp", "base_amp")
-    SCALAR_KEYS = ("rssi_atten", "rssi", "rate")
+    VECTOR_KEYS = ("amp_atten",) + VAR_KEYS
+    SCALAR_KEYS = ("rssi_atten", "rssi")
 
     def __init__(self):
         self.streams: dict[tuple[str, int], Stream] = {}
@@ -175,8 +172,7 @@ class Engine:
 
     def start_calibration(self, seconds: float):
         for s in self.streams.values():
-            s._calib = []
-            s._calib_var = []
+            s.start_calibration()
         self.calib_until = time.monotonic() + seconds
 
     def ingest(self, pkt: CsiPacket, t: float | None = None):
@@ -186,8 +182,8 @@ class Engine:
             s = self.streams[key] = Stream()
         s.add(time.monotonic() if t is None else t, pkt, self.calibrating)
 
-    def tick(self, window_s: float, tau_s: float) -> dict:
-        now = time.monotonic()
+    def tick(self, window_s: float, tau_s: float, now: float | None = None) -> dict:
+        now = time.monotonic() if now is None else now
         dt = 0.1 if self.last_tick is None else now - self.last_tick
         self.last_tick = now
 
@@ -196,17 +192,21 @@ class Engine:
             for s in self.streams.values():
                 s.finish_calibration()
 
+        by_link: dict[str, list] = {}
+        calibrated: dict[str, bool] = {}
+        for (link, _rx), s in self.streams.items():
+            f = s.features(now, window_s, dt, tau_s, self.calibrating)
+            calibrated[link] = calibrated.get(link, True) and s.calibrated
+            if f:
+                by_link.setdefault(link, []).append(f)
+
         out = {}
-        for link in LINKS:
-            feats = [f for (l, _), s in self.streams.items() if l == link
-                     for f in [s.features(now, window_s, dt, tau_s, self.calibrating)] if f]
-            if not feats:
-                continue
-            d = {k: np.mean([f[k] for f in feats], axis=0).round(3).tolist()
+        for link, feats in sorted(by_link.items()):
+            d = {k: np.round(np.mean([f[k] for f in feats], axis=0), 3).tolist()
                  for k in self.VECTOR_KEYS}
             d.update({k: round(float(np.mean([f[k] for f in feats])), 3)
                       for k in self.SCALAR_KEYS})
             d["rate"] = round(sum(f["rate"] for f in feats), 1)
-            d["calibrated"] = all(s.calibrated for (l, _), s in self.streams.items() if l == link)
+            d["calibrated"] = calibrated[link]
             out[link] = d
         return out

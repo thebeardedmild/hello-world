@@ -10,8 +10,7 @@
 <header class="bar">
   <h1>CSI Lite</h1>
   <span id="mode" class="pill">connecting…</span>
-  <span id="nodeA" class="pill">A ·</span>
-  <span id="nodeB" class="pill">B ·</span>
+  <span id="nodePills" class="pills"></span>
   <div class="spacer"></div>
   <button id="btnStart" class="primary">Start</button>
   <button id="btnStop">Stop</button>
@@ -22,17 +21,36 @@
 <main>
   <aside class="panel">
     <section>
-      <h2>Rig geometry</h2>
-      <p class="muted small">Measure antenna to antenna. The three distances fix the triangle; the whole frame can move as long as these stay the same (re-calibrate after moving it).</p>
-      <label>Router ↔ Node A <span><input id="d_ra" type="number" step="0.05" min="0.1"> m</span></label>
-      <label>Router ↔ Node B <span><input id="d_rb" type="number" step="0.05" min="0.1"> m</span></label>
-      <label>Node A ↔ Node B <span><input id="d_ab" type="number" step="0.05" min="0.1"> m</span></label>
+      <h2>Antennas</h2>
+      <p class="muted small">Positions in metres, antenna to antenna. Pick any origin (the router is a good one). Or turn on <b>Move antennas</b> and drag them on the map. Re-calibrate after moving the rig.</p>
+      <table id="devTable" class="dev-table">
+        <thead><tr><th>Device</th><th>x (m)</th><th>y (m)</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="row">
+        <button id="btnAddNode" class="small-btn">+ Add node</button>
+        <span id="unplaced" class="small"></span>
+      </div>
+
+      <details id="placeBox">
+        <summary>Place a node from two measured distances</summary>
+        <div class="place-grid">
+          <span>Node</span><select id="plNode"></select>
+          <span>from</span><span><select id="plRef1"></select> <input id="plD1" type="number" step="0.05" min="0.1" value="3"> m</span>
+          <span>from</span><span><select id="plRef2"></select> <input id="plD2" type="number" step="0.05" min="0.1" value="3"> m</span>
+          <span>side</span><select id="plSide"><option value="1">left of the line (counter-clockwise)</option><option value="-1">right of the line (clockwise)</option></select>
+        </div>
+        <button id="btnPlace" class="small-btn">Place</button>
+        <div id="placeMsg" class="small"></div>
+      </details>
+
       <label>WiFi channel <span><input id="channel" type="number" min="1" max="14" step="1"></span></label>
       <div id="geomInfo" class="muted small"></div>
       <h3>Processing</h3>
       <label>Sounding rate <span><input id="rate_hz" type="number" min="1" max="500" step="1"> Hz</span></label>
+      <div id="rateHint" class="muted small"></div>
       <label>Feature window <span><input id="window_s" type="number" min="0.2" max="10" step="0.1"> s</span></label>
-      <label>Map ellipse width <span><input id="fresnel_m" type="number" min="0.02" max="2" step="0.01"> m</span></label>
+      <label>Link zone width <span><input id="fresnel_m" type="number" min="0.02" max="2" step="0.01"> m</span></label>
       <button id="btnApply">Apply</button>
       <div id="cfgMsg" class="small"></div>
     </section>
@@ -41,44 +59,90 @@
       <h2>CSI component</h2>
       <div id="metrics" class="radio-list"></div>
       <h3>Links</h3>
-      <div id="linkToggles" class="checks"></div>
+      <label class="inline"><input id="showRouter" type="checkbox"> Router → node links</label>
+      <label class="inline"><input id="showPeer" type="checkbox"> Node ↔ node links</label>
+      <p class="muted small">Toggle single links in the link table.</p>
       <h3>Subcarriers</h3>
       <div class="range-row">
-        <input id="scLo" type="number" min="-26" max="26" step="1" value="-26">
+        <input id="scLo" type="number" min="-26" max="26" step="1">
         <span>to</span>
-        <input id="scHi" type="number" min="-26" max="26" step="1" value="26">
+        <input id="scHi" type="number" min="-26" max="26" step="1">
         <button id="scAll" class="small-btn">All</button>
       </div>
       <p class="muted small">Or drag across the subcarrier chart.</p>
+    </section>
+
+    <section>
+      <h2>Localization</h2>
+      <h3>Image</h3>
+      <div class="seg" id="imgMode">
+        <button data-v="tomo">Tomographic</button><button data-v="bp">Backprojection</button>
+      </div>
+      <p class="muted small" id="imgModeHelp"></p>
+      <label>Regularization <span><input id="reg" type="number" min="0.01" max="5" step="0.05"></span></label>
+      <h3>Detection</h3>
+      <label>Threshold <span><input id="thresh" type="number" step="0.1" min="0"> <em id="threshUnit"></em></span></label>
+      <p class="muted small">A disturbance is marked when any enabled link exceeds this.</p>
       <h3>Map scale</h3>
-      <label class="inline"><input id="autoScale" type="checkbox" checked> Auto</label>
-      <label>Full scale <span><input id="scaleMax" type="number" step="0.5" min="0.1" value="6"> <em id="scaleUnit"></em></span></label>
+      <label class="inline"><input id="autoScale" type="checkbox"> Auto</label>
+      <label>Full scale <span><input id="scaleMax" type="number" step="0.5" min="0.01"> <em id="scaleUnit"></em></span></label>
     </section>
   </aside>
 
   <section class="viz">
-    <div class="card map-card">
+    <div class="card">
       <div class="card-head">
-        <h2>Spatial attenuation</h2>
+        <h2>Spatial map</h2>
         <span id="metricLabel" class="muted"></span>
+        <div class="spacer"></div>
+        <label class="inline small"><input id="editLayout" type="checkbox"> Move antennas</label>
       </div>
-      <div class="map-wrap"><canvas id="map"></canvas></div>
+      <canvas id="map"></canvas>
       <div id="legend" class="legend"></div>
-      <div id="readouts" class="readouts"></div>
+    </div>
+
+    <div class="two-col">
+      <div class="card">
+        <div class="card-head">
+          <h2>Relative to antenna</h2>
+          <select id="refAnt"></select>
+        </div>
+        <canvas id="radar"></canvas>
+        <div id="locText" class="loc-text"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Distance from each antenna</h2></div>
+        <div id="distList" class="dist-list"></div>
+        <div id="zoneList" class="small muted"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Links</h2>
+        <span class="muted small">sorted by current value · click a row to highlight it on the map</span>
+      </div>
+      <div class="table-wrap"><table id="linkTable" class="link-table">
+        <thead><tr><th></th><th>Link</th><th class="num">Value</th><th class="bar-col"></th><th class="num">pkt/s</th><th class="num">RSSI</th><th>Baseline</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
     </div>
 
     <div class="card">
       <div class="card-head">
         <h2>Per-subcarrier</h2>
-        <span class="muted small">live value for each of the 52 data subcarriers · drag to select</span>
+        <span class="muted small">one row per link, one column per data subcarrier · drag to select a range</span>
       </div>
       <canvas id="sc" class="chart"></canvas>
+      <div id="scLegend" class="legend"></div>
     </div>
 
     <div class="card">
       <div class="card-head">
         <h2>History</h2>
-        <span class="muted small">last 30 s · one group of bars per 0.1 s tick</span>
+        <span class="muted small">last 30 s, one bar per 0.1 s</span>
+        <div class="spacer"></div>
+        <div class="seg" id="histMode"><button data-v="bars">Bars</button><button data-v="heat">Heatmap</button></div>
       </div>
       <canvas id="hist" class="chart"></canvas>
     </div>

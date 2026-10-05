@@ -1,10 +1,10 @@
 /*
  * CSI Lite node firmware (ESP-IDF 5.x, ESP32 / ESP32-S3 / ESP32-C3).
  *
- * Each node joins the router as a station and measures CSI on two kinds of
- * frames:
- *   - ICMP echo replies from the router  -> link "router -> this node"
- *   - ESP-NOW broadcasts from the peer   -> link "peer node -> this node"
+ * Up to 16 nodes (IDs 0-15, shown as A-P) join the same router as stations.
+ * Each node measures CSI on two kinds of frames:
+ *   - ICMP echo replies from the router     -> link "router -> this node"
+ *   - ESP-NOW broadcasts from every other node -> link "node X -> this node"
  *
  * Every CSI capture is forwarded to the host server as one UDP datagram
  * (see csi_pkt_hdr_t). The server controls the node over a small text
@@ -34,7 +34,9 @@
 static const char *TAG = "csi_node";
 
 #define CSI_MAGIC       0x4C495343u /* "CSIL" little-endian */
-#define CSI_VERSION     1
+#define CSI_VERSION     2
+#define MAX_PEERS       16
+#define SRC_ROUTER      0xFF
 #define CSI_MAX_LEN     384
 #define CSI_QUEUE_LEN   32
 #define ESPNOW_MAGIC    0xC5u
@@ -46,9 +48,9 @@ typedef struct __attribute__((packed)) {
     uint8_t  self_mac[6];
     uint8_t  src_mac[6];
     int8_t   rssi;
-    int8_t   noise_floor;
+    uint8_t  src_node;      /* v2: transmitting node ID, or SRC_ROUTER */
     uint8_t  channel;
-    uint8_t  src_kind;      /* 0 = router (AP), 1 = peer node (ESP-NOW) */
+    uint8_t  src_kind;      /* 0 = router (AP), 1 = other node (ESP-NOW) */
     uint32_t seq;
     uint32_t timestamp_us;
     uint16_t csi_len;
@@ -62,9 +64,9 @@ typedef struct {
 static QueueHandle_t s_csi_queue;
 static uint8_t s_self_mac[6];
 static uint8_t s_ap_bssid[6];
-static uint8_t s_peer_mac[6];
+static struct { uint8_t mac[6]; uint8_t id; } s_peers[MAX_PEERS];
+static volatile int s_npeers;
 static volatile bool s_have_ap;
-static volatile bool s_have_peer;
 static volatile bool s_streaming;
 static volatile uint32_t s_rate_hz = CONFIG_CSI_DEFAULT_RATE_HZ;
 static uint32_t s_seq;
@@ -84,8 +86,14 @@ static void csi_rx_cb(void *ctx, wifi_csi_info_t *info)
     }
     /* Only keep frames from the two transmitters we care about. */
     bool from_ap = s_have_ap && memcmp(info->mac, s_ap_bssid, 6) == 0;
-    bool from_peer = s_have_peer && memcmp(info->mac, s_peer_mac, 6) == 0;
-    if (!from_ap && !from_peer) {
+    int peer = -1;
+    for (int i = 0; !from_ap && i < s_npeers; i++) {
+        if (memcmp(info->mac, s_peers[i].mac, 6) == 0) {
+            peer = s_peers[i].id;
+            break;
+        }
+    }
+    if (!from_ap && peer < 0) {
         return;
     }
 
@@ -97,7 +105,7 @@ static void csi_rx_cb(void *ctx, wifi_csi_info_t *info)
     memcpy(item.hdr.self_mac, s_self_mac, 6);
     memcpy(item.hdr.src_mac, info->mac, 6);
     item.hdr.rssi = info->rx_ctrl.rssi;
-    item.hdr.noise_floor = info->rx_ctrl.noise_floor;
+    item.hdr.src_node = from_ap ? SRC_ROUTER : (uint8_t)peer;
     item.hdr.channel = info->rx_ctrl.channel;
     item.hdr.src_kind = from_ap ? 0 : 1;
     item.hdr.seq = s_seq++;
@@ -169,7 +177,7 @@ static void ping_start(void)
     }
 }
 
-/* The peer measures CSI on these broadcasts, giving the node A <-> node B link. */
+/* Every other node measures CSI on these broadcasts, giving the node <-> node links. */
 static void espnow_task(void *arg)
 {
     uint8_t payload[4] = { ESPNOW_MAGIC, CONFIG_CSI_NODE_ID, 0, 0 };
@@ -185,9 +193,20 @@ static void espnow_task(void *arg)
 
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int len)
 {
-    if (len >= 2 && data[0] == ESPNOW_MAGIC && data[1] != CONFIG_CSI_NODE_ID) {
-        memcpy(s_peer_mac, info->src_addr, 6);
-        s_have_peer = true;
+    /* Runs in the WiFi task, like csi_rx_cb, so the peer table needs no lock. */
+    if (len < 2 || data[0] != ESPNOW_MAGIC || data[1] == CONFIG_CSI_NODE_ID) {
+        return;
+    }
+    for (int i = 0; i < s_npeers; i++) {
+        if (memcmp(s_peers[i].mac, info->src_addr, 6) == 0) {
+            s_peers[i].id = data[1];
+            return;
+        }
+    }
+    if (s_npeers < MAX_PEERS) {
+        memcpy(s_peers[s_npeers].mac, info->src_addr, 6);
+        s_peers[s_npeers].id = data[1];
+        s_npeers++;
     }
 }
 

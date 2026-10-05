@@ -9,8 +9,8 @@ menu "CSI Lite Node"
         default "mypassword"
 
     config CSI_NODE_ID
-        int "Node ID (0 = node A, 1 = node B)"
-        range 0 1
+        int "Node ID (0 = A, 1 = B, ... 15 = P); unique per board"
+        range 0 15
         default 0
 
     config CSI_SERVER_IP

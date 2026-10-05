@@ -1,6 +1,6 @@
 """CSI Lite host server.
 
-    python csi_server.py              # live: talk to the two ESP32 nodes
+    python csi_server.py              # live: talk to the ESP32 nodes
     python csi_server.py --simulate   # no hardware: synthetic CSI
 
 Then open http://localhost:8080
@@ -8,6 +8,7 @@ Then open http://localhost:8080
 import argparse
 import asyncio
 import json
+import math
 import socket
 import time
 from pathlib import Path
@@ -16,14 +17,13 @@ from aiohttp import WSMsgType, web
 
 import protocol
 from processing import Engine
-from simulator import NODE_MAC, Simulator
+from simulator import Simulator, node_mac
 
 HERE = Path(__file__).parent
 CONFIG_PATH = HERE / "config.json"
 DEFAULT_CONFIG = {
-    "d_ra": 3.0,           # router <-> node A distance (m)
-    "d_rb": 3.0,           # router <-> node B distance (m)
-    "d_ab": 3.0,           # node A <-> node B distance (m)
+    # antenna positions in metres, R = router, A..P = node IDs 0..15
+    "devices": {"R": [0.0, 0.0], "A": [3.0, 0.0], "B": [1.5, 2.6]},
     "channel": 6,          # router's 2.4 GHz channel (sets wavelength)
     "rate_hz": 100,        # sounding rate per node
     "window_s": 1.0,       # feature window
@@ -34,27 +34,54 @@ DEFAULT_CONFIG = {
 TICK_S = 0.1
 
 
+def triangle(d_ra: float, d_rb: float, d_ab: float) -> dict:
+    """Router at the origin, node A on +x, node B above the x axis."""
+    bx = (d_ra ** 2 + d_rb ** 2 - d_ab ** 2) / (2 * d_ra)
+    by = math.sqrt(max(d_rb ** 2 - bx ** 2, 0.0))
+    return {"R": [0.0, 0.0], "A": [d_ra, 0.0], "B": [round(bx, 3), round(by, 3)]}
+
+
 def load_config() -> dict:
-    cfg = dict(DEFAULT_CONFIG)
+    cfg = json.loads(json.dumps(DEFAULT_CONFIG))
     if CONFIG_PATH.exists():
         try:
-            cfg.update({k: v for k, v in json.loads(CONFIG_PATH.read_text()).items()
-                        if k in DEFAULT_CONFIG})
-        except (OSError, ValueError):
+            saved = json.loads(CONFIG_PATH.read_text())
+            if "devices" not in saved and {"d_ra", "d_rb", "d_ab"} <= saved.keys():
+                saved["devices"] = triangle(saved["d_ra"], saved["d_rb"], saved["d_ab"])
+            cfg = validate_config(saved, cfg)
+        except (OSError, ValueError, TypeError, KeyError):
             pass
     return cfg
+
+
+def validate_devices(devices: dict) -> dict:
+    out = {}
+    for name, p in devices.items():
+        if name != "R" and name not in protocol.NODE_LETTERS:
+            raise ValueError(f"unknown device {name!r}; nodes are A-P")
+        x, y = float(p[0]), float(p[1])
+        if not (math.isfinite(x) and math.isfinite(y)) or max(abs(x), abs(y)) > 100:
+            raise ValueError(f"position of {name} is out of range")
+        out[name] = [round(x, 3), round(y, 3)]
+    if "R" not in out:
+        raise ValueError("the router (R) needs a position")
+    if len(out) < 2:
+        raise ValueError("add at least one node")
+    names = sorted(out)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            if math.dist(out[a], out[b]) < 0.1:
+                raise ValueError(f"{a} and {b} are closer than 10 cm")
+    return out
 
 
 def validate_config(new: dict, old: dict) -> dict:
     cfg = dict(old)
     for k, v in new.items():
-        if k in DEFAULT_CONFIG:
+        if k == "devices":
+            cfg[k] = validate_devices(v)
+        elif k in DEFAULT_CONFIG:
             cfg[k] = type(DEFAULT_CONFIG[k])(v)
-    a, b, c = cfg["d_ra"], cfg["d_rb"], cfg["d_ab"]
-    if min(a, b, c) <= 0:
-        raise ValueError("distances must be positive")
-    if a + b <= c or a + c <= b or b + c <= a:
-        raise ValueError("those three distances can't form a triangle")
     if not 1 <= cfg["channel"] <= 14:
         raise ValueError("channel must be 1-14")
     if not 1 <= cfg["rate_hz"] <= 500:
@@ -115,20 +142,23 @@ class State:
 
     def status(self) -> dict:
         now = time.monotonic()
-        nodes = {}
-        for i in (0, 1):
-            n = self.nodes.get(i)
-            if self.simulate:
-                nodes["AB"[i]] = {"online": True, "ip": "simulated",
-                                  "mac": protocol.mac_str(NODE_MAC[i])}
-            elif n:
-                nodes["AB"[i]] = {"online": now - n["last_seen"] < 5, "ip": n["ip"], "mac": n["mac"]}
-            else:
-                nodes["AB"[i]] = {"online": False, "ip": None, "mac": None}
+        # every configured node, plus any node heard on the network but not placed yet
+        nodes = {name: {"online": False, "ip": None, "mac": None, "placed": True}
+                 for name in self.cfg["devices"] if name != "R"}
+        for i, n in self.nodes.items():
+            name = protocol.node_name(i)
+            nodes[name] = {"online": now - n["last_seen"] < 5, "ip": n["ip"], "mac": n["mac"],
+                           "placed": name in self.cfg["devices"]}
+        if self.simulate:
+            nodes = {n: v for n, v in nodes.items() if v["placed"]}
+            for name in nodes:
+                nodes[name] = {"online": True, "ip": "simulated", "placed": True,
+                               "mac": protocol.mac_str(node_mac(protocol.NODE_LETTERS.index(name)))}
         remaining = max(0.0, self.engine.calib_until - now) if self.engine.calibrating else 0.0
         return {"type": "status", "running": self.running, "simulate": self.simulate,
                 "calibrating": self.engine.calibrating, "calib_remaining": round(remaining, 1),
-                "config": self.cfg, "nodes": nodes}
+                "config": self.cfg, "nodes": dict(sorted(nodes.items())),
+                "sim_rate": round(self.sim.effective_rate(self.cfg["rate_hz"]), 1) if self.sim else None}
 
     async def broadcast(self, msg: dict):
         if not self.clients:
@@ -157,7 +187,7 @@ class State:
             old = self.cfg
             self.cfg = validate_config(msg.get("config", {}), self.cfg)
             CONFIG_PATH.write_text(json.dumps(self.cfg, indent=2))
-            geometry_changed = any(self.cfg[k] != old[k] for k in ("d_ra", "d_rb", "d_ab", "channel"))
+            geometry_changed = any(self.cfg[k] != old[k] for k in ("devices", "channel"))
             if geometry_changed:
                 # The rig moved/changed: old baselines no longer apply.
                 self.engine.reset()
@@ -194,8 +224,12 @@ async def tick_loop(app):
         await asyncio.sleep(TICK_S)
         if st.running:
             links = st.engine.tick(st.cfg["window_s"], st.cfg["baseline_tau_s"])
-            await st.broadcast({"type": "frame", "t": time.time(), "links": links,
-                                "calibrating": st.engine.calibrating})
+            msg = {"type": "frame", "t": time.time(), "links": links,
+                   "calibrating": st.engine.calibrating}
+            if st.sim:
+                p = st.sim.person(time.monotonic() - st.sim.t0) if st.sim.person_present else None
+                msg["truth"] = None if p is None else [round(float(v), 3) for v in p]
+            await st.broadcast(msg)
         if time.monotonic() - last_status > 1.0:
             last_status = time.monotonic()
             await st.broadcast(st.status())
@@ -210,14 +244,16 @@ async def discovery_loop(app):
 
 async def sim_loop(app):
     st: State = app["state"]
-    period = 0.02
     carry = 0.0
+    last = time.monotonic()
     while True:
-        await asyncio.sleep(period)
+        await asyncio.sleep(0.02)
+        now = time.monotonic()
+        elapsed, last = now - last, now
         if not st.running:
             continue
         st.sim.person_present = not st.engine.calibrating  # "step out" for calibration
-        carry += st.cfg["rate_hz"] * period
+        carry += st.sim.effective_rate(st.cfg["rate_hz"]) * min(elapsed, 0.2)
         n, carry = int(carry), carry - int(carry)
         if n:
             for data in st.sim.packets(n):

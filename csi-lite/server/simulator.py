@@ -12,23 +12,19 @@ import time
 
 import numpy as np
 
-from protocol import SUBCARRIERS, encode
+from protocol import NODE_LETTERS, SRC_ROUTER, SUBCARRIERS, encode
 
 C = 299_792_458.0
 ROUTER_MAC = bytes.fromhex("02c51e000001")
-NODE_MAC = (bytes.fromhex("02c51e00000a"), bytes.fromhex("02c51e00000b"))
+MAX_SIM_PACKETS_S = 1500  # keep the simulator from eating a whole CPU core
+
+
+def node_mac(node_id: int) -> bytes:
+    return bytes.fromhex("02c51e0000") + bytes([0xA0 + node_id])
 
 
 def channel_freq(ch: int) -> float:
     return 2.484e9 if ch == 14 else 2.407e9 + 5e6 * ch
-
-
-def triangle(d_ra: float, d_rb: float, d_ab: float):
-    """Router at the origin, node A on +x, node B above the x axis."""
-    ax = d_ra
-    bx = (d_ra ** 2 + d_rb ** 2 - d_ab ** 2) / (2 * d_ra)
-    by = math.sqrt(max(d_rb ** 2 - bx ** 2, 0.0))
-    return np.array([0.0, 0.0]), np.array([ax, 0.0]), np.array([bx, by])
 
 
 class Simulator:
@@ -41,15 +37,27 @@ class Simulator:
 
     def configure(self, cfg: dict):
         self.cfg = dict(cfg)
-        r, a, b = triangle(cfg["d_ra"], cfg["d_rb"], cfg["d_ab"])
-        self.pos = {"R": r, "A": a, "B": b}
+        self.pos = {name: np.array(p, dtype=float) for name, p in cfg["devices"].items()}
+        self.node_ids = sorted(NODE_LETTERS.index(n) for n in self.pos if n != "R")
         self.f = channel_freq(cfg["channel"]) + SUBCARRIERS * 312.5e3
-        pts = np.array([r, a, b])
+        pts = np.array(list(self.pos.values()))
         self.center = pts.mean(axis=0)
         self.span = (pts.max(axis=0) - pts.min(axis=0)).clip(1.0, None)
         lo, hi = pts.min(axis=0) - 1.5, pts.max(axis=0) + 1.5
         self.reflectors = self.rng.uniform(lo, hi, size=(4, 2))
         self.refl_gain = self.rng.uniform(0.15, 0.4, size=4)
+        # (rx node id, tx name, rx name, src node id)
+        self.streams = []
+        for rx in self.node_ids:
+            rxn = NODE_LETTERS[rx]
+            self.streams.append((rx, "R", rxn, SRC_ROUTER))
+            for tx in self.node_ids:
+                if tx != rx:
+                    self.streams.append((rx, NODE_LETTERS[tx], rxn, tx))
+        self.static = {(tx, rx): self._static(tx, rx) for _, tx, rx, _ in self.streams}
+
+    def effective_rate(self, rate_hz: float) -> float:
+        return min(rate_hz, MAX_SIM_PACKETS_S / max(len(self.streams), 1))
 
     def person(self, t: float) -> np.ndarray:
         x = self.center[0] + 0.75 * self.span[0] * math.sin(2 * math.pi * t / 23.0)
@@ -59,13 +67,18 @@ class Simulator:
     def _path(self, d: float) -> np.ndarray:
         return np.exp(-2j * math.pi * self.f * d / C) / max(d, 0.3)
 
+    def _static(self, tx: str, rx: str) -> np.ndarray:
+        ptx, prx = self.pos[tx], self.pos[rx]
+        h = np.zeros(len(self.f), complex)
+        for q, g in zip(self.reflectors, self.refl_gain):
+            h += g * self._path(float(np.linalg.norm(ptx - q) + np.linalg.norm(q - prx)))
+        return h
+
     def channel(self, tx: str, rx: str, p: np.ndarray | None) -> np.ndarray:
         ptx, prx = self.pos[tx], self.pos[rx]
         d = float(np.linalg.norm(ptx - prx))
         los = self._path(d)
-        h = np.zeros_like(los)
-        for q, g in zip(self.reflectors, self.refl_gain):
-            h += g * self._path(float(np.linalg.norm(ptx - q) + np.linalg.norm(q - prx)))
+        h = self.static[(tx, rx)].copy()
         if p is not None:
             d1, d2 = float(np.linalg.norm(ptx - p)), float(np.linalg.norm(p - prx))
             excess = d1 + d2 - d
@@ -85,18 +98,16 @@ class Simulator:
         return h, int(round(rssi))
 
     def packets(self, n_per_stream: int) -> list[bytes]:
-        """One burst: n packets for each of the four streams."""
+        """One burst: n packets for every stream."""
         t = time.monotonic() - self.t0
         p = self.person(t) if self.person_present else None
         out = []
-        # (rx node id, tx name, rx name, src_kind, src mac)
-        streams = ((0, "R", "A", 0, ROUTER_MAC), (1, "R", "B", 0, ROUTER_MAC),
-                   (0, "B", "A", 1, NODE_MAC[1]), (1, "A", "B", 1, NODE_MAC[0]))
-        for node, tx, rx, kind, src in streams:
+        for node, tx, rx, src in self.streams:
+            src_mac = ROUTER_MAC if src == SRC_ROUTER else node_mac(src)
             for _ in range(n_per_stream):
                 jitter = None if p is None else p + self.rng.normal(0, 0.01, 2)
                 h, rssi = self._impair(self.channel(tx, rx, jitter))
                 self.seq += 1
-                out.append(encode(node, NODE_MAC[node], src, rssi, self.cfg["channel"],
-                                  kind, self.seq, int(t * 1e6), h))
+                out.append(encode(node, node_mac(node), src_mac, rssi, self.cfg["channel"],
+                                  src, self.seq, int(t * 1e6), h))
         return out
