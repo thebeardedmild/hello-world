@@ -55,15 +55,15 @@ python3 "finance fun/engine.py"
 ## Leaderboard
 
 <!-- LEADERBOARD:START -->
-_Last updated: Day 98 (2026-10-30)_
+_Last updated: Day 99 (2026-10-31)_
 
 | Rank | Strategy | Portfolio Value | Return |
 |---|---|---|---|
-| 1 | Buy & Hold | $11,007.65 | +10.08% |
-| 2 | Equal Weight Rebalancer | $10,963.12 | +9.63% |
-| 3 | Mean Reversion | $10,440.23 | +4.40% |
-| 4 | Momentum | $10,119.72 | +1.20% |
-| 5 | Random Walker | $9,937.32 | -0.63% |
+| 1 | Buy & Hold | $11,045.67 | +10.46% |
+| 2 | Equal Weight Rebalancer | $11,000.06 | +10.00% |
+| 3 | Mean Reversion | $10,415.89 | +4.16% |
+| 4 | Momentum | $10,131.08 | +1.31% |
+| 5 | Random Walker | $9,957.92 | -0.42% |
 
-**Today's simulated closing prices:** ALPH $92.57, BETA $112.33, GAMA $92.52, DELT $135.33, OMEG $118.86
+**Today's simulated closing prices:** ALPH $93.73, BETA $111.77, GAMA $92.30, DELT $136.62, OMEG $119.11
 <!-- LEADERBOARD:END -->
